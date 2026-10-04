@@ -1,0 +1,77 @@
+name: ci
+# Builds and tests the package on macOS 15 and 26, builds the library for iOS, then runs the CLI and the README example on three
+# LibriSpeech clips with the model folder (the `ci-bundle` release asset while the repository is private, the model repository otherwise) and checks the texts. Hosted runners have no Neural
+# Engine, so Core ML runs these models on the CPU here: slower, same texts.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sw_vers; xcodebuild -version | head -1; swift --version | head -1
+      - name: Build
+        run: swift build -c release 2>&1 | tail -3
+      - name: Test
+        run: swift test 2>&1 | tail -5
+      - name: Build the library for iOS
+        run: xcodebuild -scheme PhononCoreML -destination 'generic/platform=iOS' -quiet build
+  transcribe:
+    needs: build-test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Model folder + clips
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download ci-bundle -p 'ci_bundle.tgz' -R ${{ github.repository }} 2>/dev/null; then
+            tar xzf ci_bundle.tgz && rm ci_bundle.tgz
+          else   # public: the model folder and the three clips from the model repository, anonymously
+            python3 -m pip install -q huggingface_hub
+            python3 -c "from huggingface_hub import snapshot_download as s; s('FermionResearch/Phonon-2-CoreML', token=False, local_dir='bundle', allow_patterns=['manifest.json', 'decoder.bin', 'Phonon-2.mlpackage/*', 'ci/*'])"
+            mv bundle/ci ci
+          fi
+          du -sh bundle && ls ci/clips
+      - name: Build
+        run: swift build -c release 2>&1 | tail -3
+      - name: CLI on three clips
+        run: |
+          set -o pipefail
+          .build/release/phonon-coreml-cli bundle ci/clips/*.flac --json cli.json | tee cli.txt
+      - name: README example
+        run: .build/release/phonon-coreml-example bundle ci/clips/1089-134686-0002.flac | tee example.txt
+      - name: Check texts
+        run: |
+          python3 - <<'PY'
+          import json
+          exp = json.load(open("ci/expected_texts.json")); bad = 0
+          for row in json.load(open("cli.json"))["rows"]:
+              uid = row["path"].rsplit(".", 1)[0]; ok = row["text"].strip() == exp[uid].strip(); bad += not ok
+              print("OK  " if ok else "DIFF", uid, "|", row["text"])
+          first = open("example.txt").read().splitlines()[0].strip(); ok = first == exp["1089-134686-0002"].strip(); bad += not ok
+          print("OK  " if ok else "DIFF", "example |", first)
+          raise SystemExit(1 if bad else 0)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: transcribe-${{ matrix.os }}
+          path: |
+            cli.json
+            cli.txt
+            example.txt
