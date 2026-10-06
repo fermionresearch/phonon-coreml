@@ -42,8 +42,8 @@ jobs:
           if gh release download ci-bundle -p 'ci_bundle.tgz' -R ${{ github.repository }} 2>/dev/null; then
             tar xzf ci_bundle.tgz && rm ci_bundle.tgz
           else   # public: the model folder and the three clips from the model repository, anonymously
-            python3 -m pip install -q huggingface_hub
-            python3 -c "from huggingface_hub import snapshot_download as s; s('FermionResearch/Phonon-2-CoreML', token=False, local_dir='bundle', allow_patterns=['manifest.json', 'decoder.bin', 'Phonon-2.mlpackage/*', 'ci/*'])"
+            python3 -m venv "$RUNNER_TEMP/hf" && "$RUNNER_TEMP/hf/bin/pip" install -q huggingface_hub
+            "$RUNNER_TEMP/hf/bin/python" -c "from huggingface_hub import snapshot_download as s; s('FermionResearch/Phonon-2-CoreML', token=False, local_dir='bundle', allow_patterns=['manifest.json', 'decoder.bin', 'Phonon-2.mlpackage/*', 'ci/*'])"
             mv bundle/ci ci
           fi
           du -sh bundle && ls ci/clips
@@ -55,6 +55,14 @@ jobs:
           .build/release/phonon-coreml-cli bundle ci/clips/*.flac --json cli.json | tee cli.txt
       - name: README example
         run: .build/release/phonon-coreml-example bundle ci/clips/1089-134686-0002.flac | tee example.txt
+      - name: Any sample rate and format, --words, a missing file
+        run: |
+          set -o pipefail
+          afconvert -f WAVE -d LEI16@44100 -c 2 ci/clips/1089-134686-0002.flac s44.wav
+          afconvert -f m4af -d aac@44100 -b 128000 s44.wav s44.m4a
+          .build/release/phonon-coreml-cli bundle s44.m4a --words | tee words.txt
+          set +e; .build/release/phonon-coreml-cli bundle missing.wav 2> missing.txt; code=$?; set -e
+          cat missing.txt; echo "exit $code" | tee missing_exit.txt
       - name: Check texts
         run: |
           python3 - <<'PY'
@@ -65,6 +73,18 @@ jobs:
               print("OK  " if ok else "DIFF", uid, "|", row["text"])
           first = open("example.txt").read().splitlines()[0].strip(); ok = first == exp["1089-134686-0002"].strip(); bad += not ok
           print("OK  " if ok else "DIFF", "example |", first)
+          # 44.1 kHz stereo AAC: the same text; --words: one "start end word" line per word, in order, joining to the text
+          import re
+          lines = open("words.txt").read().splitlines(); text = lines[0].strip(); ok = text == exp["1089-134686-0002"].strip(); bad += not ok
+          print("OK  " if ok else "DIFF", "m4a 44.1 kHz |", text)
+          rows = [re.fullmatch(r"(\d+\.\d\d) (\d+\.\d\d) (\S+)", l) for l in lines[1:]]
+          ok = all(rows) and len(rows) == len(text.split()) and " ".join(r[3] for r in rows) == text
+          ok = ok and all(float(r[1]) <= float(r[2]) for r in rows) and all(float(a[1]) <= float(b[1]) for a, b in zip(rows, rows[1:])); bad += not ok
+          print("OK  " if ok else "DIFF", "--words |", len(rows), "word lines")
+          # a missing file: a one-line error and exit 1, not a crash
+          err = open("missing.txt").read().strip(); code = open("missing_exit.txt").read().split()[-1]
+          ok = err == "error: missing.wav: no such file" and code == "1"; bad += not ok
+          print("OK  " if ok else "DIFF", "missing file | exit", code, "|", err)
           raise SystemExit(1 if bad else 0)
           PY
       - uses: actions/upload-artifact@v4
@@ -75,3 +95,5 @@ jobs:
             cli.json
             cli.txt
             example.txt
+            words.txt
+            missing.txt

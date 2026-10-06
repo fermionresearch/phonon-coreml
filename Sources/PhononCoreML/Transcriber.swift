@@ -46,7 +46,8 @@ public final class Transcriber {
         public var rescue = true                      // long audio only: re-decode a window when >= rescueGapSeconds of speech energy carries no word
         public var rescueMode = "halves"              // "halves" (default), "shift" (15 s window centred on the gap), "wide" (35 s window centred on the gap), "halves+shift"
         public var rescueGapSeconds = 1.5, rescueMinDensity = 2.4
-        public var progress: ((String, Double) -> Void)? = nil   // (phase, seconds since init) for first-run UI: "compiled", "loaded enc_5s", ...
+        public var progress: ((String, Double) -> Void)? = nil   // (phase, seconds since init) for first-run UI: "compiling" (first run only),
+                                                                 // "compiled", "loading enc_5s" (slow once per Mac), "loaded enc_5s", ...
         public init() {}
     }
     public struct Timing { public var melS = 0.0, encS = 0.0, decS = 0.0, wallS = 0.0, audioS = 0.0, windows = 0, overlapped = 0, rescued = 0, rescueTried = 0, rescueWords = 0 }
@@ -103,6 +104,7 @@ public final class Transcriber {
         if FileManager.default.fileExists(atPath: local.path) { compiledURL = local }
         else if FileManager.default.fileExists(atPath: cached.path) { compiledURL = cached }
         else {
+            o.progress?("compiling", Date().timeIntervalSince(t0Init))
             let tmp = try MLModel.compileModel(at: p)
             try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
             if (try? FileManager.default.moveItem(at: tmp, to: cached)) != nil { compiledURL = cached } else { compiledURL = tmp }
@@ -141,6 +143,7 @@ public final class Transcriber {
         modelLock.lock(); if let m = models[key] { modelLock.unlock(); return m }; modelLock.unlock()
         let t = Date()
         let cfg = MLModelConfiguration(); cfg.computeUnits = options.computeUnits; cfg.functionName = "\(manifest.program_prefix)\(key)s"
+        options.progress?("loading \(manifest.program_prefix)\(key)s", Date().timeIntervalSince(t0Init))
         let m = try MLModel(contentsOf: compiledURL, configuration: cfg)
         modelLock.lock(); if models[key] == nil { models[key] = m; functionLoadSeconds[key] = Date().timeIntervalSince(t) }; let r = models[key]!; modelLock.unlock()
         options.progress?("loaded \(manifest.program_prefix)\(key)s", Date().timeIntervalSince(t0Init))
