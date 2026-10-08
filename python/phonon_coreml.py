@@ -175,6 +175,7 @@ class Phonon2CoreML:
 
     def __init__(self, bundle, compute="CPU_AND_NE", frames=None, long_audio=None):
         import coremltools as ct
+        self._recent = {}
         self.m = json.load(open(os.path.join(bundle, "manifest.json"))); self.dec = DecoderBin(os.path.join(bundle, "decoder.bin"))
         assert self.dec.container_sha256 == self.m["container_sha256"], "decoder.bin and manifest come from different containers"
         self.frames = frames or self.m.get("frames_rule", "hf"); self.cu = getattr(ct.ComputeUnit, compute); self.bundle = bundle; self.ct = ct
@@ -219,7 +220,11 @@ class Phonon2CoreML:
         pi = self.m.get("pos_input", True); pi = pi.get(str(int(s)), True) if isinstance(pi, dict) else pi   # per function or one flag
         if pi: feed["pos"] = self.pos_table(Ts[3])
         if self.m.get("io") == "float16": feed = {k: v.astype(np.float16) for k, v in feed.items()}   # bundles with 16-bit float inputs
-        return np.asarray(p.predict(feed)["enc"], np.float32)[0, :lens[3]]
+        out = np.asarray(p.predict(feed)["enc"], np.float32)[0, :lens[3]]
+        # Core ML keeps each function's last inputs and releases them later on its own thread; holding the recent ones here
+        # keeps that release from freeing Python memory outside the interpreter lock.
+        self._recent.setdefault(s, []).append(feed); del self._recent[s][:-8]
+        return out
     def transcribe(self, wave):
         """-> {"text", "words", "segments"}"""
         wave = np.asarray(wave, np.float32).reshape(-1)

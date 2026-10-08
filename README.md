@@ -11,8 +11,8 @@ Requires a Mac with Apple silicon on macOS 15 or later, and Swift 6 from Xcode 1
 (`xcode-select --install`).
 
 ```bash
-# 1. The package: clone the 1.1.1 release (or download it from the Releases page) and build it
-git clone --branch 1.1.1 https://github.com/fermionresearch/phonon-coreml
+# 1. The package: clone the 1.1.2 release (or download it from the Releases page) and build it
+git clone --branch 1.1.2 https://github.com/fermionresearch/phonon-coreml
 cd phonon-coreml
 swift build -c release
 
@@ -48,7 +48,7 @@ when it starts. Later runs load in under a second.
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/fermionresearch/phonon-coreml", from: "1.1.1")
+.package(url: "https://github.com/fermionresearch/phonon-coreml", from: "1.1.2")
 ```
 
 ```swift
@@ -65,7 +65,7 @@ Every word carries its start and end time in seconds. `transcribe(url:)` takes a
 
 ## Python
 
-Python 3.9 to 3.13 (coremltools has no wheels for Python 3.14 yet), in a virtual environment:
+Python 3.10 to 3.13 (coremltools has no wheels for Python 3.14 yet), in a virtual environment:
 
 ```bash
 python3.13 -m venv .venv && source .venv/bin/activate
